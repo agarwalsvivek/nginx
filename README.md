@@ -87,3 +87,28 @@ location / {
 - For a directory (like `/`), nginx tries each `index` file in order → `/usr/share/nginx/html/index.html`
 
 **Key idea:** nginx config is split into files and glued together with `include`. To serve my own site, I can replace the files in `/usr/share/nginx/html/`, the config files, or both.
+
+## 1.3 Serve my own page (bind mount)
+
+```bash
+cd ~/Projects/learn/nginx
+mkdir -p 01-static/site
+cd 01-static
+echo "<h1>My first nginx page</h1>" > site/index.html
+
+docker run -d --rm --name step1 -p 8080:80 \
+  -v "$(pwd)/site:/usr/share/nginx/html:ro" nginx:1.27-alpine
+curl -i http://localhost:8080/
+
+docker stop step1
+```
+
+| Part | Meaning |
+|------|---------|
+| `-v <host-path>:<container-path>` | **Bind mount**: my local folder appears inside the container and *hides* whatever was there |
+| `$(pwd)` | Current directory. Docker needs an absolute path |
+| `:ro` | Read-only, so nginx can read my files but not change them |
+
+**What I learned:**
+- Editing `site/index.html` shows up on the next request **without restarting nginx**.
+- Why: nginx reads content files from disk **on every request**. It reads its **config** only at startup or reload, so config changes need `nginx -s reload`. (Covered in 1.4.)
