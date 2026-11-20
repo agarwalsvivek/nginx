@@ -111,4 +111,65 @@ docker stop step1
 
 **What I learned:**
 - Editing `site/index.html` shows up on the next request **without restarting nginx**.
-- Why: nginx reads content files from disk **on every request**. It reads its **config** only at startup or reload, so config changes need `nginx -s reload`. (Covered in 1.4.)
+- Why: nginx reads content files from disk **on every request**. It reads its **config** only at startup or reload, so config changes need `nginx -s reload`.
+
+## 1.4 Write my own server config
+
+`01-static/default.conf`:
+
+```nginx
+server {
+    listen      80;                  # port nginx listens on inside the container
+    server_name localhost;           # which Host header this block answers to
+
+    root  /usr/share/nginx/html;     # folder to serve files from
+    index index.html;                # file to serve when a directory (like /) is requested
+}
+```
+
+Run it **from inside `01-static/`**:
+
+```bash
+cd ~/Projects/learn/nginx/01-static
+docker run -d --rm --name step1 -p 8080:80 \
+  -v "$(pwd)/site:/usr/share/nginx/html:ro" \
+  -v "$(pwd)/default.conf:/etc/nginx/conf.d/default.conf:ro" \
+  nginx:1.27-alpine
+
+curl -i http://localhost:8080/
+docker exec step1 nginx -t    # test config: "syntax is ok" or file + line of the error
+docker exec step1 nginx -T    # test AND print the full combined config nginx is using
+```
+
+| Part | Meaning |
+|------|---------|
+| `server { }` | One website ("virtual host"). nginx can have many and picks one per request |
+| 2nd `-v` | Replaces a single file. My `default.conf` sits where the default was and is pulled in by `include /etc/nginx/conf.d/*.conf;` |
+| `nginx -t` | Test the config without applying it |
+| `nginx -T` | Test and print the whole merged config |
+
+**Config is a tree, and settings are inherited downward:**
+
+```
+http { }
+ └── server { }        ← root + index set here
+      └── location { } ← none yet; would inherit root + index
+```
+
+- `root` and `index` are allowed in `http`, `server` and `location`.
+- A setting in an outer block applies to everything inside it, unless an inner block sets its own value.
+- The default config put `root` inside `location / { }`. Mine puts it at the `server` level, so it applies to every request, and future `location` blocks inherit it. Repeating `root` in every location is a common beginner mistake.
+
+### ⚠️ Gotcha: a wrong bind-mount path creates an empty directory
+
+I first ran the command from the project root instead of `01-static/`, and got:
+
+```
+error mounting ".../nginx/default.conf" to rootfs at "/etc/nginx/conf.d/default.conf":
+... not a directory: Are you trying to mount a directory onto a file (or vice-versa)?
+```
+
+- If the host path in `-v` **doesn't exist**, Docker **silently creates an empty directory** (owned by root) instead of reporting an error.
+- A directory can't be mounted over a file, so the container failed to start.
+- Cleanup: `sudo rmdir default.conf site` in the wrong folder (`rmdir` only removes empty directories, so it's safe).
+- **Lesson:** when a mount behaves strangely, check `pwd` first. `docker-compose.yml` avoids this because its paths are relative to the compose file.
