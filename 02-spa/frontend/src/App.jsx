@@ -7,7 +7,7 @@ const Home = () => {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    fetch('http://localhost:3000/api/hello')
+    fetch('/api/hello')
       .then((res) => res.json())
       .then(setData)
       .catch((err) => setError(err.message))

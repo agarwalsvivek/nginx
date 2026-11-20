@@ -332,3 +332,106 @@ curl -i http://localhost:3000/api/hello     # terminal 2
 **Default ports for other backends:** FastAPI/Flask use **8000**/**5000**. Spring Boot uses **8080**, which clashes with nginx on 8080, so change one (e.g. `server.port=3000` in `application.properties`).
 
 **Restarting after closing terminals:** `node server.js` stops when its terminal closes. A container started with `-d` keeps running, so check it with `docker ps`.
+
+## 3.2 Calling the API directly → CORS error
+
+React (`02-spa/frontend/src/App.jsx`) called `fetch('http://localhost:3000/api/hello')`, rebuilt with `npm run build`, served on `localhost:8080`.
+
+**Result:**
+- Page: `Error: Failed to fetch`
+- Console: `blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present`
+- Network tab: **CORS error**. The request **did reach** the backend, which answered 200, but the **browser** refused to let JS read the response.
+
+**Why:**
+- **Origin = scheme + host + port.** `http://localhost:8080` and `http://localhost:3000` are **different origins**.
+- Browsers block JS from reading cross-origin responses unless the server sends `Access-Control-Allow-Origin`.
+- CORS is enforced by **browsers only**. curl, Postman and server-to-server calls ignore it, which is why `curl` worked.
+
+**Two ways to fix it:**
+
+| Approach | How |
+|----------|-----|
+| Add CORS headers in the backend | `app.use(cors())` (Express), `@CrossOrigin` (Spring), `CORSMiddleware` (FastAPI) |
+| **Serve frontend + API from one origin via nginx** ✅ | Browser only talks to `localhost:8080`; nginx forwards `/api/*` to the backend. No CORS needed |
+
+## 3.3 Proxy `/api` through nginx → 502
+
+React now calls a **relative URL**: `fetch('/api/hello')`, which goes to the same origin the page came from (nginx on `:8080`).
+
+Added to `02-spa/default.conf`:
+
+```nginx
+    # API requests: forward to the backend
+    location /api/ {
+        proxy_pass http://localhost:3000;
+    }
+```
+
+- **`proxy_pass`**: don't look for a file. Forward the request to another server and pass its response back. The browser never knows the backend exists. This is a **reverse proxy**.
+- Added a request logger to `server.js` to see whether requests arrive.
+
+**Result:** `curl -i http://localhost:8080/api/hello` → **`502 Bad Gateway`**, and **no log line** in the node terminal.
+
+**Why:** inside a container, **`localhost` is the container itself**, not my machine:
+
+```
+My machine
+├── node server.js  ← listening on port 3000
+└── container "step2"
+     └── nginx → proxy_pass http://localhost:3000
+                  └── looks for port 3000 *inside the container* → nothing there
+```
+
+**502 = nginx is fine, but it can't reach the server behind it ("upstream").**
+
+**How to debug a 502:**
+
+```bash
+docker logs step2 2>&1 | grep upstream
+# connect() failed (111: Connection refused) while connecting to upstream,
+# ... upstream: "http://127.0.0.1:3000/api/hello"
+```
+
+1. Read the `upstream:` address nginx actually tried.
+2. Is the backend running?
+3. Can it be reached **from where nginx runs** (container vs host)?
+
+## 3.4 Reach the backend on my machine → ✅ works
+
+`host.docker.internal` is Docker's special hostname for "the machine running Docker". On Linux it must be enabled with `--add-host`.
+
+```nginx
+    location /api/ {
+        proxy_pass http://host.docker.internal:3000;
+    }
+```
+
+```bash
+docker stop step2
+cd ~/Projects/learn/nginx/02-spa
+docker run -d --rm --name step2 -p 8080:80 \
+  --add-host=host.docker.internal:host-gateway \
+  -v "$(pwd)/frontend/dist:/usr/share/nginx/html:ro" \
+  -v "$(pwd)/default.conf:/etc/nginx/conf.d/default.conf:ro" \
+  nginx:1.27-alpine
+
+curl -i http://localhost:8080/api/hello    # → 200 + JSON, log line appears in node terminal
+```
+
+- `--add-host=host.docker.internal:host-gateway` adds an `/etc/hosts` entry inside the container that points at my machine.
+- The browser shows the message with **no CORS error**, even though the backend has **no CORS headers**. The browser only ever talks to `localhost:8080`.
+
+**Mistake I made:** I got a 502 again, because I hadn't actually saved the `proxy_pass` change.
+
+**Debugging habit:** check the config nginx is **actually running**, not what's in the editor:
+
+```bash
+docker exec step2 nginx -T | grep proxy_pass
+```
+
+If it's still 502:
+
+```bash
+docker logs step2 2>&1 | grep upstream               # which address did nginx try?
+docker exec step2 getent hosts host.docker.internal  # what does the name resolve to inside the container?
+```
