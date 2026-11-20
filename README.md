@@ -435,3 +435,70 @@ If it's still 502:
 docker logs step2 2>&1 | grep upstream               # which address did nginx try?
 docker exec step2 getent hosts host.docker.internal  # what does the name resolve to inside the container?
 ```
+
+## 3.5 Backend in a container too (Docker Compose) → ✅ works
+
+Compose starts several containers together on a shared network where **each service name is a hostname**.
+
+`03-api/default.conf`: same as `02-spa/default.conf`, except:
+
+```nginx
+    location /api/ {
+        proxy_pass http://backend:3000;    # "backend" = the Compose service name
+    }
+```
+
+`03-api/docker-compose.yml`:
+
+```yaml
+services:
+  backend:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    command: node server.js
+
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ../02-spa/frontend/dist:/usr/share/nginx/html:ro
+      - ./default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+```
+
+```bash
+cd ~/Projects/learn/nginx/03-api
+docker compose up -d
+docker compose ps          # add -a to also see stopped containers
+docker compose logs web    # nginx logs
+docker compose logs backend
+docker compose down        # stop and remove everything
+```
+
+| Part | Meaning |
+|------|---------|
+| `services:` | Each one becomes a container. The name is also its hostname on the shared network |
+| `backend` has **no `ports:`** | Not reachable from my machine, only from other containers (nginx) |
+| Relative paths | Relative to the compose file, not the current directory, so no `$(pwd)` gotcha |
+| `depends_on` | Start `backend` before `web` |
+
+**Results:**
+- `curl -i localhost:8080/api/hello` → **200**. Headers show both layers: `Server: nginx` and `X-Powered-By: Express`.
+- `curl localhost:3000/api/hello` → **can't connect**. ✅ Good: nginx is the **single front door**, so anything configured there (rate limits, upload limits, HTTPS) can't be bypassed.
+- Backend log still says `running on http://localhost:3000`. "localhost" depends on where you're standing.
+
+### ⚠️ Gotcha: unknown hostname → nginx won't start
+
+I forgot to change `proxy_pass` from `host.docker.internal` (which only existed because of `--add-host`) and got `curl: (7) Couldn't connect to server`.
+
+- nginx **resolves `proxy_pass` hostnames at startup**. If a name doesn't exist, nginx **refuses to start**: the container shows `Exited (1)`.
+- `docker compose logs web` → `[emerg] host not found in upstream "host.docker.internal:3000" in /etc/nginx/conf.d/default.conf:15`
+
+| Symptom | Meaning | First thing to check |
+|---------|---------|----------------------|
+| `502 Bad Gateway` | nginx runs but can't reach the backend | `logs web` → `upstream:` address; is the backend up? |
+| `Couldn't connect to server` | **nginx itself isn't running** | `docker compose ps -a`, then `logs web` for `[emerg]` |
