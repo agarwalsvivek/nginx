@@ -210,3 +210,90 @@ Added React Router (`npm install react-router`) with `/` and `/about` routes, th
 | **Refresh** on `/about` (or open the link directly) | Browser sends `GET /about` to nginx. nginx looks for `/usr/share/nginx/html/about`, and that file doesn't exist | ❌ 404 |
 
 **Key idea:** React routes exist only in the browser. nginx only knows about files. The fix: *"if no file matches the URL, return `index.html` and let React pick the page."*
+
+## 2.3 Fix it with `try_files`
+
+`02-spa/default.conf`:
+
+```nginx
+server {
+    listen      80;
+    server_name localhost;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+`try_files` tries each option from left to right and uses the **first one that exists**:
+
+| Option | Meaning | For `/about` |
+|--------|---------|--------------|
+| `$uri` | A file at this path? | no |
+| `$uri/` | A directory at this path (serve its `index`)? | no |
+| `/index.html` | Fallback | ✅ returns `index.html` → React renders `<About />` |
+
+- `location / { }` matches every request, because every URL starts with `/`.
+- `try_files` must go inside a `location`. `root` and `index` stay at the `server` level and are inherited.
+- You can't add a mount to a running container, so stop it and run it again:
+
+```bash
+docker stop step2
+cd ~/Projects/learn/nginx/02-spa
+docker run -d --rm --name step2 -p 8080:80 \
+  -v "$(pwd)/frontend/dist:/usr/share/nginx/html:ro" \
+  -v "$(pwd)/default.conf:/etc/nginx/conf.d/default.conf:ro" \
+  nginx:1.27-alpine
+```
+
+### ⚠️ The catch: missing assets return 200 + HTML
+
+```bash
+curl -i http://localhost:8080/assets/does-not-exist.js   # → 200 OK, body is index.html!
+```
+
+The fallback applies to **every** missing path, including JS, CSS and images. A real-world failure:
+
+1. A user has the app open. Its `index.html` refers to `assets/About-OLD123.js`.
+2. A new deploy replaces that file with `About-NEW456.js`.
+3. The user navigates, the browser requests the old file, and nginx returns `index.html` with **200**.
+4. The browser runs the HTML as JS: `Uncaught SyntaxError: Unexpected token '<'`.
+
+This is confusing because the network tab shows 200 and nothing looks broken. A real 404 would make the problem obvious.
+
+## 2.4 Missing assets → real 404
+
+```nginx
+server {
+    listen      80;
+    server_name localhost;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # Built files: serve the file, or a real 404. Never fall back to index.html.
+    location /assets/ {
+        try_files $uri =404;
+    }
+
+    # Everything else is a React route, so fall back to index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+- **Prefix matching:** `/assets/x.js` matches both `/assets/` and `/`. nginx picks the **longest matching prefix**, so the order of the blocks doesn't matter.
+- **`=404`** as the last `try_files` option means: if nothing is found, return status 404.
+- Apply config changes:
+
+```bash
+docker exec step2 nginx -t          # always test first
+docker exec step2 nginx -s reload   # apply without downtime
+```
+
+- If a reload doesn't pick up the change, the editor may have replaced the file, and a single-file mount keeps the old one. Use `docker restart step2`.
