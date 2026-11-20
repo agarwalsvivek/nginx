@@ -297,3 +297,38 @@ docker exec step2 nginx -s reload   # apply without downtime
 ```
 
 - If a reload doesn't pick up the change, the editor may have replaced the file, and a single-file mount keeps the old one. Use `docker restart step2`.
+
+---
+
+# Step 3: Route `/api` to a backend — notes
+
+## 3.1 A small backend
+
+```bash
+cd ~/Projects/learn/nginx
+mkdir -p 03-api/backend && cd 03-api/backend
+npm init -y
+npm install express
+```
+
+`03-api/backend/server.js`:
+
+```js
+const express = require('express')
+const app = express()
+
+app.get('/api/hello', (req, res) => {
+  res.json({ message: 'Hello from the backend', time: new Date().toISOString() })
+})
+
+app.listen(3000, () => console.log('API running on http://localhost:3000'))
+```
+
+```bash
+node server.js                              # terminal 1 (stays in the foreground)
+curl -i http://localhost:3000/api/hello     # terminal 2
+```
+
+**Default ports for other backends:** FastAPI/Flask use **8000**/**5000**. Spring Boot uses **8080**, which clashes with nginx on 8080, so change one (e.g. `server.port=3000` in `application.properties`).
+
+**Restarting after closing terminals:** `node server.js` stops when its terminal closes. A container started with `-d` keeps running, so check it with `docker ps`.
