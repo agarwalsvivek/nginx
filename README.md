@@ -1,20 +1,22 @@
 # nginx
 
-A learn-by-building project. Each step lives in its own folder (`01-static/`, `02-locations/`, …) with a `docker-compose.yml`, a commented nginx config, and a short README of things to try.
+Learning nginx as a **fullstack engineer**: how to put a React frontend and a backend (Node / Python / Spring Boot) behind nginx, and fix the errors you meet in real projects. Each step lives in its own folder (`01-static/`, `02-spa/`, …).
 
 ## Roadmap
 
-| # | What you'll build | Concept |
-|---|-------------------|---------|
-| 1 | A static site served from a container | `server`, `listen`, `root`, `index` |
-| 2 | A site with several routes and custom error pages | `location` matching, `try_files`, `error_page` |
-| 3 | nginx in front of a small backend app | Reverse proxy, `proxy_pass`, forwarded headers |
-| 4 | Several backend copies sharing the traffic | Load balancing, `upstream`, `least_conn`, `ip_hash` |
-| 5 | Faster responses from cached, compressed content | `proxy_cache`, `expires`, gzip |
-| 6 | A hammer-it-with-requests test that starts returning 429s | Rate limiting, `limit_req`, `limit_conn` |
-| 7 | The site served over HTTPS | TLS, HTTP→HTTPS redirect, HTTP/2 |
-| 8 | A tiny chat app working through the proxy | WebSocket proxy, `Upgrade`/`Connection` headers |
-| 9 | Custom logs and a debugging workflow | `log_format`, `nginx -t`, reading error logs |
+| # | What you'll build | What you'll learn |
+|---|-------------------|-------------------|
+| 1 | ✅ Serve a static page | `server`, `root`, `index`, `nginx -t` |
+| 2 | Serve a React build and fix **404 on page refresh** | SPA fallback with `try_files` |
+| 3 | Route `/api` to a backend, so **no CORS** is needed | Reverse proxy, `proxy_pass`, why **502** happens |
+| 4 | A file upload that fails with **413**, then fix it | `client_max_body_size`, timeouts (**504**) |
+| 5 | Fast-loading assets | Cache headers for hashed files, gzip |
+| 6 | A hammer-it-with-requests test that starts returning **429s** | Rate limiting |
+| 7 | A tiny chat app working through the proxy | WebSocket proxy |
+| 8 | Two copies of the backend behind nginx | Load balancing (basic) |
+| 9 | HTTPS locally | TLS basics, redirecting HTTP to HTTPS |
+
+Examples use **React (Vite)** for the frontend and **Node/Express** for the backend, with notes where Python or Spring Boot differ.
 
 ## Requirements
 
