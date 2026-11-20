@@ -175,3 +175,38 @@ error mounting ".../nginx/default.conf" to rootfs at "/etc/nginx/conf.d/default.
 - A directory can't be mounted over a file, so the container failed to start.
 - Cleanup: `sudo rmdir default.conf site` in the wrong folder (`rmdir` only removes empty directories, so it's safe).
 - **Lesson:** when a mount behaves strangely, check `pwd` first. `docker-compose.yml` avoids this because its paths are relative to the compose file.
+
+---
+
+# Step 2: Serve a React build — notes
+
+## 2.1 Serve the production build
+
+**Key idea:** in production, nginx doesn't run React. It serves the **built files** from `npm run build` (`dist/`), which are plain HTML, JS and CSS. The Vite dev server (port 5173) is only for development.
+
+```bash
+cd ~/Projects/learn/nginx
+mkdir 02-spa && cd 02-spa
+npm create vite@latest frontend -- --template react
+cd frontend
+npm install
+npm run build          # outputs dist/
+
+docker run -d --rm --name step2 -p 8080:80 \
+  -v "$(pwd)/dist:/usr/share/nginx/html:ro" \
+  nginx:1.27-alpine
+```
+
+- After changing code, run `npm run build` again and refresh. No container restart is needed, because `dist/` is mounted and nginx reads files on every request.
+- Files in `dist/assets/` have a **content hash** in their names (`index-a1b2c3.js`). When the code changes, the name changes too. That means browsers can cache these files "forever" and still get new code after a deploy (this is cache busting, used in step 5). `index.html` has no hash, so it must **not** be cached for long.
+
+## 2.2 The "404 on refresh" bug
+
+Added React Router (`npm install react-router`) with `/` and `/about` routes, then rebuilt.
+
+| Action | What actually happens | Result |
+|--------|-----------------------|--------|
+| Click the **About** link | **No request to nginx.** React Router changes the URL with JS (`history.pushState`) and renders `<About />` | ✅ Works |
+| **Refresh** on `/about` (or open the link directly) | Browser sends `GET /about` to nginx. nginx looks for `/usr/share/nginx/html/about`, and that file doesn't exist | ❌ 404 |
+
+**Key idea:** React routes exist only in the browser. nginx only knows about files. The fix: *"if no file matches the URL, return `index.html` and let React pick the page."*
